@@ -56,6 +56,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="friends"
+        options={{
+          title: '好友',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{ ios: 'person.2.fill', android: 'group', web: 'group' }} 
+              tintColor={color}
+              size={26}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: '個人設定',
