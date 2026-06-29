@@ -1,6 +1,6 @@
 import { SymbolView } from 'expo-symbols';
 import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
+import { Pressable } from 'react-native';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -61,7 +61,7 @@ export default function TabLayout() {
           title: '好友',
           tabBarIcon: ({ color }) => (
             <SymbolView
-              name={{ ios: 'person.2.fill', android: 'group', web: 'group' }} 
+              name={{ ios: 'person.2.fill', android: 'group', web: 'group' }}
               tintColor={color}
               size={26}
             />
@@ -79,6 +79,14 @@ export default function TabLayout() {
               size={26}
             />
           ),
+        }}
+      />
+
+      <Tabs.Screen
+        name="chat"
+        options={{
+          href: null,        
+          headerShown: false, 
         }}
       />
     </Tabs>
