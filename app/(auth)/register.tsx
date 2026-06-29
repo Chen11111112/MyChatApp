@@ -47,7 +47,7 @@ export default function RegisterScreen() {
       await setDoc(doc(db, 'users', user.uid), {
         email: email.trim(),
         nickname: nickname.trim() || email.split('@')[0],
-        avatarUrl: '',
+        avatar: '',
         createdAt: serverTimestamp(),
       });
       router.replace('/(tabs)');
