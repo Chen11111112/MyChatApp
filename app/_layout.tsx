@@ -1,6 +1,6 @@
 import { useFonts } from 'expo-font';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import { useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router'; // 👈 把 expo-router 的東西乾淨整併
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native'; // 👈 幫這三位找到真正的老家了！
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
