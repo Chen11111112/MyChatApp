@@ -20,7 +20,7 @@ interface UserType {
   id: string;
   email: string;
   nickname?: string;
-  avatarUrl?: string;
+  avatar?: string;
   [key: string]: any;
 }
 
@@ -187,8 +187,8 @@ export default function FriendsScreen() {
               friendList.map((friend) => (
                 <View key={friend.id} style={styles.friendCard}>
                   <View style={styles.userInfoRow}>
-                    {friend.avatarUrl ? (
-                      <Image source={{ uri: friend.avatarUrl }} style={styles.avatarImage} />
+                    {friend.avatar ? (
+                      <Image source={{ uri: friend.avatar }} style={styles.avatarImage} />
                     ) : (
                       <View style={styles.avatarCircle}>
                         <Text style={styles.avatarText}>
@@ -241,8 +241,8 @@ export default function FriendsScreen() {
                 {searchResult ? (
                   <View style={styles.resultCard}>
                     <View style={styles.userInfoRow}>
-                      {searchResult.avatarUrl ? (
-                        <Image source={{ uri: searchResult.avatarUrl }} style={styles.avatarImage} />
+                      {searchResult.avatar ? (
+                        <Image source={{ uri: searchResult.avatar }} style={styles.avatarImage} />
                       ) : (
                         <View style={styles.avatarCircle}>
                           <Text style={styles.avatarText}>{searchResult.nickname ? searchResult.nickname[0].toUpperCase() : '?'}</Text>

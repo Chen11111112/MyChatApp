@@ -10,9 +10,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  Image,
+  Alert,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { updatePassword, EmailAuthProvider, reauthenticateWithCredential, signOut } from 'firebase/auth';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { SymbolView } from 'expo-symbols';
 import { router } from 'expo-router';
 import { auth, db } from '@/firebase';
@@ -30,16 +33,89 @@ export default function ProfileScreen() {
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [loadingPassword, setLoadingPassword] = useState(false);
   const [loadingSignOut, setLoadingSignOut] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [nicknameMsg, setNicknameMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [passwordMsg, setPasswordMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarMsg, setAvatarMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    getDoc(doc(db, 'users', user.uid)).then((snap) => {
-      if (snap.exists()) setNickname(snap.data().nickname ?? '');
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setNickname(data.nickname ?? '');
+        setAvatarUrl(data.avatar ?? '');
+      }
     });
+
+    return () => unsubscribe();
   }, [user]);
+
+  const handlePickAndUploadAvatar = async () => {
+    if (!user) return;
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      if (Platform.OS === 'web') {
+        alert('請允許存取相簿後再選擇頭像');
+      } else {
+        Alert.alert('權限不足', '請允許存取相簿後再選擇頭像');
+      }
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,  // 壓低品質確保 base64 字串 < 1MB（Firestore 單文件上限）
+      base64: true,
+    });
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+
+    if (!asset.base64) {
+      setAvatarMsg({ text: '無法取得圖片資料，請再試一次', ok: false });
+      return;
+    }
+
+    setAvatarPreview(asset.uri);
+    setAvatarMsg({ text: '正在儲存頭像...', ok: false });
+    setUploadingAvatar(true);
+
+    try {
+      const mimeType = asset.mimeType || 'image/jpeg';
+      const base64Url = `data:${mimeType};base64,${asset.base64}`;
+
+      // 直接將 base64 字串存入 Firestore，不需要 Firebase Storage
+      await setDoc(
+        doc(db, 'users', user.uid),
+        { avatar: base64Url },
+        { merge: true }
+      );
+
+      setAvatarUrl(base64Url);
+      setAvatarPreview(null);
+      setAvatarMsg({ text: '頭像已更新', ok: true });
+    } catch (error: any) {
+      console.error('Avatar upload failed:', error);
+      setAvatarPreview(null);
+      const message =
+        error?.code === 'resource-exhausted'
+          ? '圖片太大，請選擇較小的圖片'
+          : '頭像儲存失敗，請稍後再試';
+      setAvatarMsg({ text: message, ok: false });
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
 
   const handleUpdateNickname = async () => {
     if (!user) return;
@@ -115,9 +191,22 @@ export default function ProfileScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{nickname ? nickname[0].toUpperCase() : '?'}</Text>
-        </View>
+        <TouchableOpacity style={styles.avatarButton} onPress={handlePickAndUploadAvatar} activeOpacity={0.8}>
+          <View style={styles.avatarCircle}>
+            {avatarPreview || avatarUrl ? (
+              <Image source={{ uri: avatarPreview || avatarUrl }} style={styles.avatarImage} />
+            ) : (
+              <Text style={styles.avatarText}>{nickname ? nickname[0].toUpperCase() : '?'}</Text>
+            )}
+            {uploadingAvatar ? (
+              <View style={styles.avatarOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+        <Text style={styles.avatarHint}>點擊更換頭像</Text>
+        {avatarMsg ? <Text style={avatarMsg.ok ? styles.successMsg : styles.errorMsg}>{avatarMsg.text}</Text> : null}
         <Text style={styles.email}>{user.email}</Text>
 
         {/* 修改暱稱 */}
@@ -252,11 +341,24 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: '#fff' },
   container: { flexGrow: 1, paddingHorizontal: 24, paddingVertical: 32, backgroundColor: '#fff' },
+  avatarButton: { alignSelf: 'center' },
   avatarCircle: {
     width: 80, height: 80, borderRadius: 40, backgroundColor: '#2f95dc',
-    justifyContent: 'center', alignItems: 'center', alignSelf: 'center', marginBottom: 12,
+    justifyContent: 'center', alignItems: 'center', alignSelf: 'center', overflow: 'hidden', marginBottom: 8,
+  },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  avatarOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   avatarText: { color: '#fff', fontSize: 32, fontWeight: '700' },
+  avatarHint: { textAlign: 'center', color: '#666', fontSize: 12, marginBottom: 8 },
   email: { textAlign: 'center', color: '#666', fontSize: 14, marginBottom: 32 },
   section: { marginBottom: 8 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#1a1a2e', marginBottom: 12 },
