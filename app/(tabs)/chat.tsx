@@ -1,8 +1,30 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
-import { useEffect, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { db } from '../../firebase'; // 如果有紅線請改為 '../firebase'
+import { router, useLocalSearchParams } from "expo-router";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  where,
+  writeBatch,
+} from "firebase/firestore";
+import { useEffect, useRef, useState, memo, useCallback } from "react";
+import {
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import { db } from "../../firebase";
+import { useAuth } from "@/context/AuthContext";
 
 interface Message {
   id: string;
@@ -10,122 +32,241 @@ interface Message {
   senderId: string;
   text: string;
   createdAt: any;
-  isRead?: boolean; // 👈 擴充未讀狀態欄位
+  isRead?: boolean;
 }
 
+interface FriendInfo {
+  nickname?: string;
+  avatar?: string;
+  email?: string;
+}
+
+const Avatar = memo(
+  ({
+    friendInfo,
+    chatWith,
+    size = 32,
+  }: {
+    friendInfo: FriendInfo;
+    chatWith: string;
+    size?: number;
+  }) => {
+    if (friendInfo.avatar) {
+      return (
+        <Image
+          source={{ uri: friendInfo.avatar }}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: "#eee",
+          }}
+        />
+      );
+    }
+    const initial = (friendInfo.nickname || chatWith || "?")[0].toUpperCase();
+    return (
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: "#2f95dc",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Text
+          style={{ color: "#fff", fontSize: size * 0.45, fontWeight: "700" }}
+        >
+          {initial}
+        </Text>
+      </View>
+    );
+  },
+);
+
+const MessageBubble = memo(
+  ({
+    item,
+    currentUserId,
+    friendInfo,
+    chatWith,
+    formatTime,
+  }: {
+    item: Message;
+    currentUserId: string;
+    friendInfo: FriendInfo;
+    chatWith: string;
+    formatTime: (t: any) => string;
+  }) => {
+    const isMe = item.senderId === currentUserId;
+    return (
+      <View style={[styles.messageRow, isMe ? styles.myRow : styles.otherRow]}>
+        {!isMe && (
+          <View style={styles.avatarWrapper}>
+            <Avatar friendInfo={friendInfo} chatWith={chatWith} size={30} />
+          </View>
+        )}
+        <View
+          style={[
+            styles.messageBubble,
+            isMe ? styles.myBubble : styles.otherBubble,
+          ]}
+        >
+          <Text style={isMe ? styles.myText : styles.otherText}>
+            {item.text}
+          </Text>
+        </View>
+        <Text style={styles.timeText}>{formatTime(item.createdAt)}</Text>
+      </View>
+    );
+  },
+);
+
 export default function ChatScreen() {
-  const { id: roomId, chatWith } = useLocalSearchParams<{ id: string; chatWith: string }>();
-  
+  const {
+    id: roomId,
+    chatWith,
+    friendUid,
+  } = useLocalSearchParams<{
+    id: string;
+    chatWith: string;
+    friendUid: string;
+  }>();
+  const { user } = useAuth();
+  const flatListRef = useRef<FlatList>(null);
+
   const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
-  
-  // 模擬當前登入者 ID (王小明)
-  const currentUserId = 'my_user_id_123'; 
+  const [inputText, setInputText] = useState("");
+  const [friendInfo, setFriendInfo] = useState<FriendInfo>({});
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!friendUid) return;
+    getDoc(doc(db, "users", friendUid))
+      .then((snap) => {
+        if (snap.exists()) setFriendInfo(snap.data() as FriendInfo);
+      })
+      .catch(console.error);
+  }, [friendUid]);
 
-    // 【即時監聽 + 雲端排序】滿足第 11 項加分要求！
+  useEffect(() => {
+    if (!roomId || !user) return;
+
     const q = query(
-      collection(db, 'messages'),
-      where('roomId', '==', roomId),
-      orderBy('createdAt', 'asc')
+      collection(db, "messages"),
+      where("roomId", "==", roomId),
+      orderBy("createdAt", "asc"),
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgList: Message[] = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...(doc.data() as Omit<Message, 'id'>)
-      }));
-      setMessages(msgList);
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const msgList: Message[] = snapshot.docs.map((docSnap) => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Omit<Message, "id">),
+        }));
+        setMessages(msgList);
 
-      // 🌟 【未讀功能核心邏輯】當收到新訊息時，把「別人發給我、且目前還是未讀」的訊息通通改成已讀
-      const batch = writeBatch(db);
-      let hasUpdates = false;
+        const batch = writeBatch(db);
+        let hasUpdates = false; 
+        snapshot.docs.forEach((document) => {
+          const data = document.data();
+          if (data.senderId !== user.uid && data.isRead !== true) {
+            batch.update(doc(db, "messages", document.id), { isRead: true });
+            hasUpdates = true;
+          }
+        });
+        if (hasUpdates) batch.commit().catch(console.error);
 
-      snapshot.docs.forEach((document) => {
-        const data = document.data();
-        // 條件：是這個房間的訊息 + 發送者不是我 + 目前 isRead 是 false (或不存在)
-        if (data.senderId !== currentUserId && data.isRead !== true) {
-          const msgRef = doc(db, 'messages', document.id);
-          batch.update(msgRef, { isRead: true });
-          hasUpdates = true;
-        }
-      });
-
-      // 如果有需要更新的未讀訊息，一次打包送給 Firebase 更新
-      if (hasUpdates) {
-        batch.commit().catch((err) => console.error("更新已讀狀態失敗:", err));
-      }
-
-    }, (error) => {
-      console.error("Firebase 監聽失敗（請確保索引已建立完畢）:", error.message);
-    });
+        setTimeout(
+          () => flatListRef.current?.scrollToEnd({ animated: true }),
+          80,
+        );
+      },
+      console.error,
+    );
 
     return () => unsubscribe();
-  }, [roomId]);
+  }, [roomId, user]);
 
-  const handleSend = async () => {
-    if (!inputText.trim()) return;
-
-    const newMessageText = inputText.trim();
-    setInputText(''); // 按下傳送時立即清空輸入框
-
+  const handleSend = useCallback(async () => {
+    if (!inputText.trim() || !user) return;
+    const text = inputText.trim();
+    setInputText("");
     try {
-      // 🌟 傳送新訊息時，附帶 isRead: false，讓接收方知道這是未讀訊息
-      await addDoc(collection(db, 'messages'), {
-        roomId: roomId,
-        senderId: currentUserId,
-        text: newMessageText,
+      await addDoc(collection(db, "messages"), {
+        roomId,
+        senderId: user.uid,
+        text,
         createdAt: serverTimestamp(),
-        isRead: false // 👈 預設為未讀
+        isRead: false,
       });
     } catch (error) {
-      console.error('發送失敗: ', error);
+      console.error("發送失敗:", error);
     }
-  };
+  }, [inputText, user, roomId]);
 
-  const formatTime = (createdAt: any) => {
-    if (!createdAt) return '';
+  const formatTime = useCallback((createdAt: any) => {
+    if (!createdAt) return "";
     try {
-      let date = createdAt.toDate ? createdAt.toDate() : new Date(createdAt.seconds * 1000);
-      if (isNaN(date.getTime())) return '';
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      return `${hours}:${minutes}`;
+      const date = createdAt.toDate
+        ? createdAt.toDate()
+        : new Date(createdAt.seconds * 1000);
+      if (isNaN(date.getTime())) return "";
+      return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
     } catch {
-      return '';
+      return "";
     }
-  };
+  }, []);
+
+  const renderItem = useCallback(
+    ({ item }: { item: Message }) => (
+      <MessageBubble
+        item={item}
+        currentUserId={user?.uid ?? ""}
+        friendInfo={friendInfo}
+        chatWith={chatWith ?? ""}
+        formatTime={formatTime}
+      />
+    ),
+    [user?.uid, friendInfo, chatWith, formatTime],
+  );
+
+  if (!user) return null;
 
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.replace('/(tabs)/two')}>
-          <Text style={styles.backButton}>〈 返回列表</Text>
+        <TouchableOpacity
+          onPress={() => router.replace("/(tabs)/two")}
+          style={styles.backBtn}
+        >
+          <Text style={styles.backButton}>〈 返回</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{chatWith || '聊天室'}</Text>
+        <View style={styles.headerCenter}>
+          <Avatar friendInfo={friendInfo} chatWith={chatWith ?? ""} size={36} />
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {chatWith || friendInfo.nickname || "聊天室"}
+          </Text>
+        </View>
         <View style={{ width: 70 }} />
       </View>
 
       <FlatList
+        ref={flatListRef}
         data={messages}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.messageList}
-        renderItem={({ item }) => {
-          const isMe = item.senderId === currentUserId;
-          return (
-            <View style={[styles.messageRow, isMe ? styles.myRow : styles.otherRow]}>
-              <View style={[styles.messageBubble, isMe ? styles.myBubble : styles.otherBubble]}>
-                <Text style={isMe ? styles.myText : styles.otherText}>{item.text}</Text>
-              </View>
-              <Text style={styles.timeText}>{formatTime(item.createdAt)}</Text>
-            </View>
-          );
-        }}
+        onContentSizeChange={() =>
+          flatListRef.current?.scrollToEnd({ animated: false })
+        }
+        renderItem={renderItem}
+        removeClippedSubviews
+        windowSize={10}
       />
 
       <View style={styles.inputContainer}>
@@ -135,8 +276,17 @@ export default function ChatScreen() {
           value={inputText}
           onChangeText={setInputText}
           onSubmitEditing={handleSend}
+          returnKeyType="send"
+          blurOnSubmit={false}
         />
-        <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+        <TouchableOpacity
+          style={[
+            styles.sendButton,
+            !inputText.trim() && styles.sendButtonDisabled,
+          ]}
+          onPress={handleSend}
+          disabled={!inputText.trim()}
+        >
           <Text style={styles.sendButtonText}>傳送</Text>
         </TouchableOpacity>
       </View>
@@ -145,22 +295,85 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 20, paddingBottom: 15, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee', paddingHorizontal: 15 },
-  backButton: { fontSize: 16, color: '#007AFF' },
-  headerTitle: { fontSize: 18, fontWeight: 'bold' },
-  messageList: { padding: 15 },
-  messageRow: { flexDirection: 'row', alignItems: 'flex-end', marginVertical: 8, maxWidth: '80%' },
-  myRow: { alignSelf: 'flex-end', flexDirection: 'row-reverse' },
-  otherRow: { alignSelf: 'flex-start' },
-  messageBubble: { padding: 10, borderRadius: 15, marginHorizontal: 5 },
-  myBubble: { backgroundColor: '#007AFF' },
-  otherBubble: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
-  myText: { color: '#fff', fontSize: 16 },
-  otherText: { color: '#333', fontSize: 16 },
-  timeText: { fontSize: 11, color: '#999', marginHorizontal: 2 },
-  inputContainer: { flexDirection: 'row', padding: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#eee', alignItems: 'center' },
-  input: { flex: 1, height: 40, borderWidth: 1, borderColor: '#ddd', borderRadius: 20, paddingHorizontal: 15, backgroundColor: '#fafafa', marginRight: 10 },
-  sendButton: { backgroundColor: '#007AFF', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20 },
-  sendButtonText: { color: '#fff', fontWeight: 'bold' },
+  container: { flex: 1, backgroundColor: "#f5f5f5" },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingTop: 50,
+    paddingBottom: 12,
+    backgroundColor: "#fff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#eee",
+    paddingHorizontal: 15,
+  },
+  backBtn: { width: 70 },
+  backButton: { fontSize: 16, color: "#007AFF" },
+  headerCenter: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    justifyContent: "center",
+  },
+  headerTitle: { fontSize: 17, fontWeight: "bold", maxWidth: 160 },
+  messageList: { padding: 15, paddingBottom: 20 },
+  messageRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    marginVertical: 6,
+    maxWidth: "80%",
+  },
+  myRow: { alignSelf: "flex-end", flexDirection: "row-reverse" },
+  otherRow: { alignSelf: "flex-start" },
+  avatarWrapper: { marginRight: 6, marginBottom: 2 },
+  messageBubble: {
+    padding: 10,
+    borderRadius: 18,
+    marginHorizontal: 4,
+    maxWidth: 220,
+  },
+  myBubble: { backgroundColor: "#007AFF", borderBottomRightRadius: 4 },
+  otherBubble: {
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e5e5e5",
+    borderBottomLeftRadius: 4,
+  },
+  myText: { color: "#fff", fontSize: 15, lineHeight: 20 },
+  otherText: { color: "#333", fontSize: 15, lineHeight: 20 },
+  timeText: {
+    fontSize: 10,
+    color: "#bbb",
+    marginHorizontal: 4,
+    marginBottom: 2,
+  },
+  inputContainer: {
+    flexDirection: "row",
+    padding: 10,
+    paddingBottom: Platform.OS === "ios" ? 20 : 10,
+    backgroundColor: "#fff",
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    alignItems: "center",
+  },
+  input: {
+    flex: 1,
+    height: 42,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 21,
+    paddingHorizontal: 16,
+    backgroundColor: "#fafafa",
+    marginRight: 10,
+    fontSize: 15,
+  },
+  sendButton: {
+    backgroundColor: "#007AFF",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 21,
+  },
+  sendButtonDisabled: { backgroundColor: "#a0c4f1" },
+  sendButtonText: { color: "#fff", fontWeight: "bold", fontSize: 15 },
 });
