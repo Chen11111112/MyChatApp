@@ -20,6 +20,7 @@ import { SymbolView } from 'expo-symbols';
 import { router } from 'expo-router';
 import { auth, db } from '@/firebase';
 import { useAuth } from '@/context/AuthContext';
+import { toSearchableNickname } from '@/utils/userFields';
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -126,7 +127,11 @@ export default function ProfileScreen() {
     }
     setLoadingProfile(true);
     try {
-      await updateDoc(doc(db, 'users', user.uid), { nickname: nickname.trim() });
+      const trimmed = nickname.trim();
+      await updateDoc(doc(db, 'users', user.uid), {
+        nickname: trimmed,
+        nicknameLower: toSearchableNickname(trimmed),
+      });
       setNicknameMsg({ text: '暱稱已更新', ok: true });
     } catch {
       setNicknameMsg({ text: '更新失敗，請稍後再試', ok: false });

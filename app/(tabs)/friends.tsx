@@ -7,27 +7,20 @@ import {
 import { collection, query, where, getDocs, addDoc, or, doc, getDoc } from 'firebase/firestore';
 import { db } from '@/firebase';
 import { useAuth } from '@/context/AuthContext';
-
-interface UserType {
-  id: string;
-  email: string;
-  nickname?: string;
-  avatar?: string;
-  [key: string]: any;
-}
+import { searchUsers, SearchUser } from '@/services/userSearch';
 
 export default function FriendsScreen() {
   const { user } = useAuth();
   const [viewMode, setViewMode] = useState<'list' | 'add'>('list');
 
   const [searchText, setSearchText] = useState('');
-  const [searchResult, setSearchResult] = useState<UserType | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [loadingSearch, setLoadingSearch] = useState(false);
-  const [loadingAdd, setLoadingAdd] = useState(false);
+  const [addingUid, setAddingUid] = useState<string | null>(null);
   const [systemMsg, setSystemMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
-  const [friendList, setFriendList] = useState<UserType[]>([]);
+  const [friendList, setFriendList] = useState<SearchUser[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(false);
 
   useEffect(() => {
@@ -53,12 +46,12 @@ export default function FriendsScreen() {
       });
       const uniqueFriendUids = [...new Set(friendUids)];
 
-      const friendsData: UserType[] = [];
+      const friendsData: SearchUser[] = [];
       await Promise.all(
         uniqueFriendUids.map(async (uid) => {
           const userSnap = await getDoc(doc(db, 'users', uid));
           if (userSnap.exists()) {
-            friendsData.push({ id: userSnap.id, ...userSnap.data() } as UserType);
+            friendsData.push({ id: userSnap.id, ...userSnap.data() } as SearchUser);
           }
         })
       );
@@ -70,7 +63,7 @@ export default function FriendsScreen() {
     }
   };
 
-  const handleChatWithFriend = (friend: UserType) => {
+  const handleChatWithFriend = (friend: SearchUser) => {
     if (!user) return;
     const roomId = [user.uid, friend.id].sort().join('_');
     const friendName = friend.nickname || friend.email || '好友';
@@ -80,34 +73,28 @@ export default function FriendsScreen() {
   const handleSearch = async () => {
     setSystemMsg(null);
     const text = searchText.trim();
-    if (!text) { setSystemMsg({ text: '請輸入暱稱或 Email', ok: false }); return; }
+    if (!text) {
+      setSystemMsg({ text: '請輸入暱稱或 Email', ok: false });
+      return;
+    }
     setLoadingSearch(true);
     try {
       setHasSearched(false);
-      setSearchResult(null);
-      const q = query(
-        collection(db, 'users'),
-        or(where('email', '==', text), where('nickname', '==', text))
-      );
-      const querySnapshot = await getDocs(q);
+      setSearchResults([]);
+      const results = await searchUsers(text, user?.uid);
+      setSearchResults(results);
       setHasSearched(true);
-      if (!querySnapshot.empty) {
-        const userDoc = querySnapshot.docs[0];
-        setSearchResult({ id: userDoc.id, ...userDoc.data() } as UserType);
-      } else {
-        setSearchResult(null);
-      }
-    } catch (error) {
+    } catch {
       setSystemMsg({ text: '搜尋時發生問題，請稍後再試', ok: false });
     } finally {
       setLoadingSearch(false);
     }
   };
 
-  const handleAddFriend = async () => {
-    if (!searchResult || !user) return;
+  const handleAddFriend = async (target: SearchUser) => {
+    if (!user) return;
     setSystemMsg(null);
-    if (user.uid === searchResult.id) {
+    if (user.uid === target.id) {
       setSystemMsg({ text: '你不能加自己為好友喔！', ok: false });
       return;
     }
@@ -121,29 +108,64 @@ export default function FriendsScreen() {
     const existingSnap = await getDocs(existingQuery);
     const alreadyFriend = existingSnap.docs.some(d => {
       const data = d.data();
-      return (data.user1 === searchResult.id || data.user2 === searchResult.id);
+      return data.user1 === target.id || data.user2 === target.id;
     });
     if (alreadyFriend) {
       setSystemMsg({ text: '已經是好友了！', ok: false });
       return;
     }
 
-    setLoadingAdd(true);
+    setAddingUid(target.id);
     try {
       await addDoc(collection(db, 'friends'), {
         user1: user.uid,
-        user2: searchResult.id,
+        user2: target.id,
         createdAt: new Date(),
       });
-      const displayName = searchResult.nickname || searchResult.email;
+      const displayName = target.nickname || target.email;
       setSystemMsg({ text: `已成功將 ${displayName} 加為好友！`, ok: true });
+      setSearchResults((prev) => prev.filter((u) => u.id !== target.id));
       setTimeout(() => setViewMode('list'), 1500);
-    } catch (error) {
+    } catch {
       setSystemMsg({ text: '無法加入好友，請稍後再試', ok: false });
     } finally {
-      setLoadingAdd(false);
+      setAddingUid(null);
     }
   };
+
+  const renderUserRow = (u: SearchUser, showAddButton = false) => (
+    <View key={u.id} style={styles.resultCard}>
+      <View style={styles.userInfoRow}>
+        {u.avatar ? (
+          <Image source={{ uri: u.avatar }} style={styles.avatarImage} />
+        ) : (
+          <View style={styles.avatarCircle}>
+            <Text style={styles.avatarText}>
+              {u.nickname ? u.nickname[0].toUpperCase() : '?'}
+            </Text>
+          </View>
+        )}
+        <View style={styles.textContainer}>
+          <Text style={styles.nameText}>{u.nickname || '未設定暱稱'}</Text>
+          <Text style={styles.emailText}>{u.email}</Text>
+        </View>
+      </View>
+      {showAddButton && (
+        <TouchableOpacity
+          style={[styles.button, addingUid === u.id && styles.buttonDisabled]}
+          onPress={() => handleAddFriend(u)}
+          disabled={addingUid === u.id}
+          activeOpacity={0.8}
+        >
+          {addingUid === u.id ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>加為好友</Text>
+          )}
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
   if (!user) return null;
 
@@ -229,31 +251,11 @@ export default function FriendsScreen() {
 
             {hasSearched && (
               <View>
-                <Text style={styles.sectionTitle}>搜尋結果</Text>
-                {searchResult ? (
-                  <View style={styles.resultCard}>
-                    <View style={styles.userInfoRow}>
-                      {searchResult.avatar ? (
-                        <Image source={{ uri: searchResult.avatar }} style={styles.avatarImage} />
-                      ) : (
-                        <View style={styles.avatarCircle}>
-                          <Text style={styles.avatarText}>
-                            {searchResult.nickname ? searchResult.nickname[0].toUpperCase() : '?'}
-                          </Text>
-                        </View>
-                      )}
-                      <View style={styles.textContainer}>
-                        <Text style={styles.nameText}>{searchResult.nickname || '未設定暱稱'}</Text>
-                        <Text style={styles.emailText}>{searchResult.email}</Text>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.button, loadingAdd && styles.buttonDisabled]}
-                      onPress={handleAddFriend} disabled={loadingAdd} activeOpacity={0.8}
-                    >
-                      {loadingAdd ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>加為好友</Text>}
-                    </TouchableOpacity>
-                  </View>
+                <Text style={styles.sectionTitle}>
+                  搜尋結果{searchResults.length > 0 ? `（${searchResults.length} 筆）` : ''}
+                </Text>
+                {searchResults.length > 0 ? (
+                  searchResults.map((u) => renderUserRow(u, true))
                 ) : (
                   <View style={styles.emptyStateBox}>
                     <Text style={styles.emptyStateText}>找不到符合條件的用戶</Text>
@@ -285,7 +287,7 @@ const styles = StyleSheet.create({
   tabTextActive: { color: '#1a1a2e', fontWeight: '700' },
   section: { marginBottom: 8 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#1a1a2e', marginBottom: 12 },
-  label: { fontSize: 13, fontWeight: '600', color: '#444', marginBottom: 6 },
+  label: { fontSize: 13, fontWeight: '600', color: '#444', marginBottom: 6, marginTop: 8 },
   input: { borderWidth: 1.5, borderColor: '#ddd', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#1a1a2e', backgroundColor: '#fafafa' },
   button: { backgroundColor: '#2f95dc', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   buttonDisabled: { opacity: 0.6 },
@@ -294,7 +296,7 @@ const styles = StyleSheet.create({
   successMsg: { color: '#2e7d32', fontSize: 13, marginTop: 8 },
   errorMsg: { color: '#dc2f2f', fontSize: 13, marginTop: 8 },
   systemMsgContainer: { textAlign: 'center', fontSize: 15, marginTop: 20, fontWeight: '600' },
-  resultCard: { borderWidth: 1.5, borderColor: '#ddd', borderRadius: 16, padding: 20, backgroundColor: '#fafafa' },
+  resultCard: { borderWidth: 1.5, borderColor: '#ddd', borderRadius: 16, padding: 20, backgroundColor: '#fafafa', marginBottom: 12 },
   friendCard: { borderWidth: 1.5, borderColor: '#eee', borderRadius: 16, padding: 16, backgroundColor: '#fff', marginBottom: 12 },
   userInfoRow: { flexDirection: 'row', alignItems: 'center' },
   avatarImage: { width: 56, height: 56, borderRadius: 28, backgroundColor: '#eee', marginRight: 16 },

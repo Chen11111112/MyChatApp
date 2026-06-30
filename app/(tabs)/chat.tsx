@@ -108,6 +108,19 @@ const MessageBubble = memo(
             <Avatar friendInfo={friendInfo} chatWith={chatWith} size={30} />
           </View>
         )}
+        {isMe && (
+          <View style={styles.metaColumn}>
+            <Text style={styles.timeText}>{formatTime(item.createdAt)}</Text>
+            <Text
+              style={[
+                styles.readStatus,
+                item.isRead ? styles.readDone : styles.readPending,
+              ]}
+            >
+              {item.isRead ? "已讀" : "未讀"}
+            </Text>
+          </View>
+        )}
         <View
           style={[
             styles.messageBubble,
@@ -118,7 +131,11 @@ const MessageBubble = memo(
             {item.text}
           </Text>
         </View>
-        <Text style={styles.timeText}>{formatTime(item.createdAt)}</Text>
+        {!isMe && (
+          <View style={styles.metaColumn}>
+            <Text style={styles.timeText}>{formatTime(item.createdAt)}</Text>
+          </View>
+        )}
       </View>
     );
   },
@@ -324,7 +341,7 @@ const styles = StyleSheet.create({
     marginVertical: 6,
     maxWidth: "80%",
   },
-  myRow: { alignSelf: "flex-end", flexDirection: "row-reverse" },
+  myRow: { alignSelf: "flex-end" },
   otherRow: { alignSelf: "flex-start" },
   avatarWrapper: { marginRight: 6, marginBottom: 2 },
   messageBubble: {
@@ -342,11 +359,26 @@ const styles = StyleSheet.create({
   },
   myText: { color: "#fff", fontSize: 15, lineHeight: 20 },
   otherText: { color: "#333", fontSize: 15, lineHeight: 20 },
+  metaColumn: {
+    alignItems: "center",
+    justifyContent: "flex-end",
+    marginHorizontal: 4,
+    marginBottom: 2,
+  },
   timeText: {
     fontSize: 10,
     color: "#bbb",
-    marginHorizontal: 4,
-    marginBottom: 2,
+  },
+  readStatus: {
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+  readDone: {
+    color: "#34C759",
+  },
+  readPending: {
+    color: "#999",
   },
   inputContainer: {
     flexDirection: "row",
