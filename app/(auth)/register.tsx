@@ -15,6 +15,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { SymbolView } from 'expo-symbols';
 import { Link, router } from 'expo-router';
 import { auth, db } from '@/firebase';
+import { buildUserSearchFields } from '@/utils/userFields';
 
 export default function RegisterScreen() {
   const [email, setEmail] = useState('');
@@ -45,8 +46,7 @@ export default function RegisterScreen() {
     try {
       const { user } = await createUserWithEmailAndPassword(auth, email.trim(), password);
       await setDoc(doc(db, 'users', user.uid), {
-        email: email.trim(),
-        nickname: nickname.trim() || email.split('@')[0],
+        ...buildUserSearchFields(email, nickname),
         avatar: '',
         createdAt: serverTimestamp(),
       });
