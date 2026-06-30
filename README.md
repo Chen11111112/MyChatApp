@@ -8,3 +8,6 @@
 
 ## Git 基礎操作
 https://hyc.eshachem.com/program/%e3%80%90git-github-%e6%95%99%e5%ad%b8%e3%80%91/
+
+## React Expo技術文件
+https://hyc.eshachem.com/program/technical-articles/react-expo-firebase-%e6%95%99%e5%ad%b8/
